@@ -4,7 +4,7 @@ local http     = require 'ood.http'
 
 -- secure_rnode_uri deliberately remains a general application proxy. These
 -- limits harden the browser-controlled proxy target without imposing the
--- read-only/static-content semantics of a publishing gateway.
+-- read-only/static-content semantics of a mirror.
 local MAX_PROXY_HOST_BYTES = 253
 local MAX_PROXY_URI_BYTES = 8192
 local MAX_RAW_TARGET_BYTES = 16384
