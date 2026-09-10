@@ -242,11 +242,14 @@
 # Reverse proxy to backend nodes
 #
 
-# Regular expression used for whitelisting allowed hostnames of nodes
+# Regular expression used for allowlisting hostnames of nodes. Because the
+# node/rnode proxy URLs carry a browser-selected HOST and PORT, production
+# deployments should make this expression as narrow as the cluster/application
+# namespace permits and pair it with appropriate network egress controls.
 # Example:
 #     host_regex: '[\w.-]+\.example\.com'
-# Default: '[^/]+' (allow reverse proxying to all hosts, this allows external
-# hosts as well)
+# Default: '[^/]+' (allow reverse proxying to all hosts, including external
+# hosts; this broad default is not a destination security boundary)
 #host_regex: '[^/]+'
 
 # Sub-uri used to reverse proxy to backend web server running on node that
@@ -280,6 +283,28 @@
 #     secure_rnode_uri: '/secure-rnode'
 # Default: null (disable this feature)
 #secure_rnode_uri: null
+
+# Optional TCP port allowlist for secure_rnode_uri. Use this when applications
+# use a known service-port set so the browser cannot select every TCP port.
+# The value must be an array with at most 64 entries; duplicates are normalized
+# and each port must be in the range 1..65535.
+# Example:
+#     secure_rnode_ports: [443, 8443]
+# Default: null (allow every valid TCP port for compatibility)
+#secure_rnode_ports: null
+
+# secure_rnode_uri retains general application-proxy behavior, but its target
+# parser rejects invalid TCP ports, ambiguous URI-authority characters,
+# oversized target components, malformed path escapes, encoded path separators,
+# and raw/parsed HOST/PORT aliases. This does not perform DNS/IP destination
+# classification; host_regex and site network policy remain the destination
+# controls.
+
+# SECURITY: Apache httpd defaults SSLProxyVerify to none. For production
+# secure_[r]node_uri routes, explicitly require certificate-chain verification,
+# keep peer-name and expiry checks enabled, and configure the site's intended CA
+# trust with SSLProxyCACertificateFile/Path as needed. Avoid disabling peer-name
+# checks merely to make an application connect.
 
 # List of SSL Proxy Apache directives
 # These settings control SSL validation for the upstream connection and require
