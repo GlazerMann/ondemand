@@ -173,8 +173,11 @@
   #     https://test.server.name:8080/configured-secure-rnode/HOST/PORT/index.html
   #     #=> https://HOST:PORT/index.html
   #
-  <LocationMatch "^/configured-secure-rnode/(?<host>[\w.-]+\.site\.edu)/(?<port>\d+)(?<uri>/.*|)">
+  <LocationMatch "^/configured-secure-rnode/(?<host>[\w.-]+\.site\.edu)/(?<port>\d+)(?<uri>/.*|)$">
     SetEnv OOD_SECURE_UPSTREAM 1
+    SetEnv OOD_SECURE_RNODE 1
+    SetEnv OOD_SECURE_RNODE_PREFIX "/configured-secure-rnode"
+    SetEnv OOD_SECURE_RNODE_PORTS "443,8443"
 
     AuthType openid-connect
     Require valid-user
