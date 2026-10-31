@@ -18,7 +18,7 @@ function loadOodShell(globals = {}) {
   return context.OodShell;
 }
 
-const KEYS = { backspace: '<BS>', left: '<L>', right: '<R>' };
+const BS = '<BS>';
 
 /** Dispatch a fake event to target's listeners and report what they did. */
 function fire(target, type, props = {}) {
@@ -97,7 +97,7 @@ function setup({ predictiveText = false, primaryScreen = true, focused = null } 
 
   const sent = [];
   const term = {
-    keyboard: { applicationCursor: false, backspaceSendsBackspace: false },
+    keyboard: { backspaceSendsBackspace: false },
     findBar: { hasFocus: false },
     focusChanges: [],
     getDocument: () => doc,
@@ -127,80 +127,39 @@ function edit(proxy, value, caret = value.length, props = {}) {
   fire(proxy, 'input', props);
 }
 
-describe('TypedLine', () => {
-  let line;
-  beforeEach(() => {
-    line = new (loadOodShell().TypedLine)();
-  });
-  const update = (text, caret = text.length) => line.update(text, caret, KEYS);
+describe('retype', () => {
+  const { retype, toAscii } = loadOodShell();
 
   test('sends each typed character', () => {
-    expect(update('l')).toBe('l');
-    expect(update('ls')).toBe('s');
-    expect(update('ls ')).toBe(' ');
+    expect(retype('', 'l', BS)).toBe('l');
+    expect(retype('l', 'ls', BS)).toBe('s');
+    expect(retype('ls', 'ls ', BS)).toBe(' ');
   });
 
   test('replays an autocorrection as backspaces and the corrected word', () => {
-    update('teh');
-    expect(update('the ')).toBe('<BS><BS>he ');
-    expect(line.text()).toBe('the ');
+    expect(retype('teh', 'the ', BS)).toBe('<BS><BS>he ');
   });
 
   test('replays a tapped suggestion that completes the word', () => {
-    update('the qu');
-    expect(update('the quick ')).toBe('ick ');
+    expect(retype('the qu', 'the quick ', BS)).toBe('ick ');
   });
 
   test('sends a backspace per deleted character, including deleting a word at once', () => {
-    update('git status');
-    expect(update('git statu')).toBe('<BS>');
-    expect(update('git ')).toBe('<BS><BS><BS><BS><BS>');
+    expect(retype('git status', 'git statu', BS)).toBe('<BS>');
+    expect(retype('git statu', 'git ', BS)).toBe('<BS><BS><BS><BS><BS>');
   });
 
-  test('sends smart punctuation as ASCII and deletes all of what it sent', () => {
-    update('ls -');
-    expect(update('ls \u2014')).toBe('<BS>--');
-    expect(update('ls \u2014all \u201chi\u2019s\u201d')).toBe('all "hi\'s"');
-    // Deleting the em dash: back over 'all "hi\'s"', then both hyphens.
-    expect(update('ls all \u201chi\u2019s\u201d', 3)).toBe('<L>'.repeat(10) + '<BS><BS>');
-  });
-
-  test('moves the cursor with arrows when the caret moves', () => {
-    update('abc');
-    expect(line.moveTo(1, KEYS)).toBe('<L><L>');
-    expect(line.moveTo(3, KEYS)).toBe('<R><R>');
-    expect(line.moveTo(3, KEYS)).toBe('');
-  });
-
-  test('inserts at the caret in the middle of the line', () => {
-    update('abc');
-    line.moveTo(1, KEYS);
-    expect(update('aXbc', 2)).toBe('X');
-    expect(line.caret).toBe(2);
-  });
-
-  test('picks the repeated character at the caret when typing doubles a letter', () => {
-    update('ab');
-    line.moveTo(1, KEYS);
-    expect(update('aab', 2)).toBe('a');
-  });
-
-  test('catches up when the caret moved without being followed', () => {
-    update('abc');
-    // The terminal cursor is still at the end; the textarea's caret was at 1.
-    expect(update('aXbc', 2)).toBe('<L><L>X');
+  test('retypes the tail for an edit in the middle, so no arrow keys are needed', () => {
+    expect(retype('abc', 'aXbc', BS)).toBe('<BS><BS>Xbc');
   });
 
   test('counts characters by code point, as the shell does', () => {
-    update('ok \ud83d\udc4d');
-    expect(update('ok ')).toBe('<BS>');
+    expect(retype('ok \u1f44d', 'ok ', BS)).toBe('<BS>');
   });
 
-  test('reset forgets the line', () => {
-    update('abc');
-    line.reset();
-    expect(line.text()).toBe('');
-    expect(update('d')).toBe('d');
+  test('turns smart punctuation into ASCII', () => {
+    expect(toAscii('ls \u2014all \u201chi\u2019s\u201d\u2026\u00a0\u2013'))
+      .toBe('ls --all "hi\'s"... -');
   });
 });
 
@@ -391,33 +350,42 @@ describe('Input proxy', () => {
     expect(sent).toEqual(['\u306b']);
   });
 
-  test('follows the caret when it moves on its own', () => {
-    const { proxy, doc, sent } = ready();
-    edit(proxy, 'abc');
-    sent.length = 0;
+  test('sends smart punctuation as ASCII and deletes all of what it sent', () => {
+    const { proxy, sent } = ready();
+    edit(proxy, 'ls -');
+    edit(proxy, 'ls \u2014');
+    edit(proxy, 'ls ');
 
-    proxy.setSelectionRange(1, 1);
-    fire(doc, 'selectionchange');
-    expect(sent).toEqual(['\x1b[D\x1b[D']);
-
-    // A selection, or a change still being made, moves nothing.
-    proxy.setSelectionRange(0, 2);
-    fire(doc, 'selectionchange');
-    proxy.value = 'abcd';
-    fire(doc, 'selectionchange');
-    expect(sent).toEqual(['\x1b[D\x1b[D']);
+    expect(sent).toEqual(['ls -', '-', '\x7f\x7f']);
   });
 
-  test('uses hterm\'s backspace and cursor key settings', () => {
-    const { proxy, term, doc, sent } = ready();
+  test('starts a new typed line when the caret moves off the end on its own', () => {
+    const { proxy, doc, sent } = ready();
+    edit(proxy, 'abc');
+
+    // A selection, or a change still being made, leaves the line alone.
+    proxy.setSelectionRange(0, 2);
+    fire(doc, 'selectionchange');
+    proxy.value = 'abXc';
+    proxy.setSelectionRange(3, 3);
+    fire(doc, 'selectionchange');
+    expect(proxy.value).toBe('abXc');
+
+    proxy.value = 'abc';
+    proxy.setSelectionRange(1, 1);
+    fire(doc, 'selectionchange');
+    expect(proxy.value).toBe('');
+    // Nothing is sent to move the shell's cursor.
+    expect(sent).toEqual(['abc']);
+  });
+
+  test('uses hterm\'s backspace setting', () => {
+    const { proxy, term, sent } = ready();
     term.keyboard.backspaceSendsBackspace = true;
-    term.keyboard.applicationCursor = true;
     edit(proxy, 'ab');
     edit(proxy, 'a');
-    proxy.setSelectionRange(0, 0);
-    fire(doc, 'selectionchange');
 
-    expect(sent).toEqual(['ab', '\b', '\x1bOD']);
+    expect(sent).toEqual(['ab', '\b']);
   });
 
   test('keeps no word context on the alternate screen', () => {
@@ -449,15 +417,14 @@ describe('Input proxy', () => {
     expect(term.focusChanges).toEqual([true, false]);
   });
 
-  test('puts the caret where the shell cursor is on focus', () => {
-    const { shell, proxy } = ready();
+  test('puts the caret at the end, where the shell cursor is, on focus', () => {
+    const { proxy } = ready();
     edit(proxy, 'abc');
-    shell.typedLine.moveTo(1, KEYS);
     proxy.blur();
-    proxy.setSelectionRange(3, 3);
+    proxy.setSelectionRange(1, 1);
     proxy.focus();
 
-    expect(proxy.selectionEnd).toBe(1);
+    expect(proxy.selectionEnd).toBe(3);
   });
 
   test('passes focus hterm gives its screen on to the textarea', () => {

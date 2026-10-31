@@ -10,7 +10,8 @@ function OodShell(element, url, profile, predictiveText) {
   // instead of hterm's screen (see installInputProxy).
   this.inputProxy = null;
   this.inputProxyComposing = false;
-  this.typedLine = new OodShell.TypedLine();
+  // The proxy's text as the shell received it (smart punctuation as ASCII).
+  this.sentText = '';
 }
 
 OodShell.prototype.createTerminal = function () {
@@ -263,11 +264,6 @@ OodShell.prototype.setPredictiveText = function (enabled) {
   }
 };
 
-/** The input proxy while it is the element taking input, otherwise null. */
-OodShell.prototype.activeInputProxy = function () {
-  return this.predictiveText ? this.inputProxy : null;
-};
-
 /**
  * Focuses whichever element takes keyboard input. With refresh set, an element
  * that already has focus is blurred first: Apple/WebKit can leave it focused
@@ -276,12 +272,11 @@ OodShell.prototype.activeInputProxy = function () {
  */
 OodShell.prototype.focusInput = function (refresh) {
   const termDocument = this.term.getDocument();
-  const proxy = this.activeInputProxy();
-  if (proxy) {
-    if (refresh && termDocument.activeElement === proxy) {
-      proxy.blur();
+  if (this.predictiveText && this.inputProxy) {
+    if (refresh && termDocument.activeElement === this.inputProxy) {
+      this.inputProxy.blur();
     }
-    proxy.focus();
+    this.inputProxy.focus();
     return;
   }
 
@@ -392,7 +387,7 @@ OodShell.prototype.installInputProxy = function () {
       // Backspace with nothing left in the textarea deletes what the shell
       // had before it.
       ev.preventDefault();
-      term.onVTKeystroke(shell.lineEditingKeys().backspace);
+      term.onVTKeystroke(shell.backspaceKey());
     }
   });
   proxy.addEventListener('input', function (ev) {
@@ -413,34 +408,38 @@ OodShell.prototype.installInputProxy = function () {
     ev.preventDefault();
     const text = ev.clipboardData ? ev.clipboardData.getData('text/plain') : '';
     shell.resetInputProxy();
-    if (!text) {
-      return;
-    }
-    if (typeof term.onPasteData_ === 'function') {
+    if (text) {
       // The same path as pasting onto hterm's screen, so bracketed paste
       // still applies.
       term.onPasteData_(text);
-    } else {
-      term.onVTKeystroke(text.replace(/\r\n|\n/g, '\r'));
     }
   });
 
-  proxy.addEventListener('focus', function () {
-    // Start with the caret where the shell's cursor is.
-    const offset = Array.from(proxy.value)
-      .slice(0, shell.typedLine.caret).join('').length;
-    proxy.setSelectionRange(offset, offset);
-    shell.onInputProxyFocusChange(true);
-  });
-  proxy.addEventListener('blur', function () {
-    shell.onInputProxyFocusChange(false);
-  });
+  // hterm moves the document selection to its cursor whenever it redraws,
+  // which would pull the keyboard's context out of the textarea. It skips that
+  // while its find bar's input has focus; this textarea claims the same. The
+  // cursor is drawn focused or not, as hterm does for its own screen.
+  const onFocusChange = function (ev) {
+    const focused = ev.type === 'focus';
+    if (focused) {
+      proxy.setSelectionRange(proxy.value.length, proxy.value.length);
+    }
+    term.findBar.hasFocus = focused;
+    term.onFocusChange_(focused);
+  };
+  proxy.addEventListener('focus', onFocusChange);
+  proxy.addEventListener('blur', onFocusChange);
 
-  // Dragging across the iOS space bar moves the caret without an edit; move
-  // the shell's cursor with it.
+  // The shell's cursor stays at the end of what was sent, so the caret has to
+  // as well. If it moves by itself (dragging across the iOS space bar), the
+  // typed line starts over from there.
   termDocument.addEventListener('selectionchange', function () {
-    if (termDocument.activeElement === proxy) {
-      shell.followInputProxyCaret();
+    if (termDocument.activeElement === proxy &&
+        !shell.inputProxyComposing &&
+        proxy.selectionStart === proxy.selectionEnd &&
+        proxy.selectionEnd < proxy.value.length &&
+        OodShell.toAscii(proxy.value) === shell.sentText) {
+      shell.resetInputProxy();
     }
   });
 
@@ -449,8 +448,7 @@ OodShell.prototype.installInputProxy = function () {
   // is over, unless that left text selected for the user to copy. None of
   // these need to keep a touch gesture: taps focus the textarea directly.
   const reclaimFocus = function () {
-    if (shell.activeInputProxy() !== proxy ||
-        termDocument.activeElement !== screen) {
+    if (!shell.predictiveText || termDocument.activeElement !== screen) {
       return;
     }
     const selection = termDocument.getSelection();
@@ -474,21 +472,6 @@ OodShell.prototype.installInputProxy = function () {
   }, true);
 
   return proxy;
-};
-
-OodShell.prototype.onInputProxyFocusChange = function (focused) {
-  const term = this.term;
-  // hterm moves the document selection to its cursor whenever it redraws,
-  // which would pull the selection, and with it the keyboard's context, out
-  // of the textarea. It skips that while its find bar's input has focus; this
-  // textarea needs the same.
-  if (term.findBar) {
-    term.findBar.hasFocus = focused;
-  }
-  // Draw the cursor as focused or not, as hterm does for its own screen.
-  if (typeof term.onFocusChange_ === 'function') {
-    term.onFocusChange_(focused);
-  }
 };
 
 OodShell.MODIFIER_KEYS = [
@@ -533,20 +516,14 @@ OodShell.prototype.routeInputProxyKey = function (ev) {
   return 'command';
 };
 
-/** What the shell's line editor expects for these keys, per hterm's settings. */
-OodShell.prototype.lineEditingKeys = function () {
-  const keyboard = this.term.keyboard || {};
-  const cursorKey = keyboard.applicationCursor ? '\x1bO' : '\x1b[';
-  return {
-    backspace: keyboard.backspaceSendsBackspace ? '\b' : '\x7f',
-    left: cursorKey + 'D',
-    right: cursorKey + 'C'
-  };
+/** What the shell's line editor expects for Backspace, per hterm's setting. */
+OodShell.prototype.backspaceKey = function () {
+  return this.term.keyboard.backspaceSendsBackspace ? '\b' : '\x7f';
 };
 
 /** Forgets the typed line; whatever is typed next starts a new one. */
 OodShell.prototype.resetInputProxy = function () {
-  this.typedLine.reset();
+  this.sentText = '';
   if (this.inputProxy && this.inputProxy.value !== '') {
     this.inputProxy.value = '';
   }
@@ -558,24 +535,25 @@ OodShell.prototype.resetInputProxy = function () {
  */
 OodShell.prototype.sendInputProxyEdits = function () {
   const proxy = this.inputProxy;
-  const line = this.typedLine;
-  const keys = this.lineEditingKeys();
+  const backspace = this.backspaceKey();
   const lines = proxy.value.split(/\r\n|\r|\n/);
+  const last = lines.pop();
   let keystrokes = '';
 
-  if (lines.length === 1) {
-    keystrokes = line.update(proxy.value, proxy.selectionEnd, keys);
-  } else {
-    // A line break that got in (dictating "new line", say) submits the text
-    // before it, and what follows it starts the next line.
-    const rest = lines.pop();
-    lines.forEach(function (text) {
-      keystrokes += line.update(text, text.length, keys) + '\r';
-      line.reset();
-    });
-    proxy.value = rest;
-    keystrokes += line.update(rest, rest.length, keys);
+  // A line break that got in (dictating "new line", say) submits the text
+  // before it, and what follows it starts the next line.
+  lines.forEach(function (line) {
+    keystrokes += OodShell.retype(this.sentText, OodShell.toAscii(line),
+                                  backspace) + '\r';
+    this.sentText = '';
+  }, this);
+  if (lines.length > 0) {
+    proxy.value = last;
   }
+
+  const text = OodShell.toAscii(last);
+  keystrokes += OodShell.retype(this.sentText, text, backspace);
+  this.sentText = text;
 
   if (keystrokes) {
     this.term.onVTKeystroke(keystrokes);
@@ -584,26 +562,40 @@ OodShell.prototype.sendInputProxyEdits = function () {
   // Full-screen programs such as vim, less and top run on the alternate screen
   // and treat letters as commands, where replaying an autocorrection would run
   // stray commands. Keep no word context there.
-  if (typeof this.term.isPrimaryScreen === 'function' &&
-      !this.term.isPrimaryScreen()) {
+  if (!this.term.isPrimaryScreen()) {
     this.resetInputProxy();
   }
 };
 
-/** Moves the shell's cursor after the input proxy's caret moved by itself. */
-OodShell.prototype.followInputProxyCaret = function () {
-  const proxy = this.inputProxy;
-  if (this.inputProxyComposing ||
-      proxy.selectionStart !== proxy.selectionEnd ||
-      proxy.value !== this.typedLine.text()) {
-    return;
-  }
+// iOS Smart Punctuation rewrites these as you type once autocorrect is on
+// ("--" becomes an em dash, quotes curl). Shells need the ASCII.
+OodShell.ASCII = {
+  '\u2018': "'", '\u2019': "'", '\u201a': "'", '\u201b': "'",
+  '\u201c': '"', '\u201d': '"', '\u201e': '"', '\u201f': '"',
+  '\u2013': '-', '\u2014': '--', '\u2026': '...', '\u00a0': ' '
+};
 
-  const caret = Array.from(proxy.value.slice(0, proxy.selectionEnd)).length;
-  const keystrokes = this.typedLine.moveTo(caret, this.lineEditingKeys());
-  if (keystrokes) {
-    this.term.onVTKeystroke(keystrokes);
+OodShell.toAscii = function (text) {
+  return text.replace(/[\u2018-\u201f\u2013\u2014\u2026\u00a0]/g,
+                      function (char) { return OodShell.ASCII[char]; });
+};
+
+/**
+ * The keystrokes that turn the shell's line from `from` into `to`: a
+ * backspace for each character after the part they share, then the rest of
+ * `to`. Retyping the tail keeps the shell's cursor at the end of what was
+ * sent, so no arrow keys are needed and the line editor only has to
+ * understand Backspace. Counts code points, as the shell does.
+ */
+OodShell.retype = function (from, to, backspace) {
+  const before = Array.from(from);
+  const after = Array.from(to);
+  let same = 0;
+  while (same < before.length && same < after.length &&
+         before[same] === after[same]) {
+    same++;
   }
+  return backspace.repeat(before.length - same) + after.slice(same).join('');
 };
 
 OodShell.prototype.onTerminalResize = function (columns, rows) {
@@ -616,95 +608,4 @@ OodShell.prototype.onTerminalResize = function (columns, rows) {
       rows: rows
     }
   }));
-};
-
-/**
- * The line typed into the input proxy, as the shell received it: one unit per
- * code point of the textarea's text, each with the keystrokes it was sent as,
- * and caret, the shell's cursor position counted in units. update() turns any
- * change to the textarea's text into the keystrokes that make the shell's
- * line match it.
- */
-OodShell.TypedLine = function () {
-  this.reset();
-};
-
-// iOS Smart Punctuation rewrites these as you type once autocorrect is on
-// ("--" becomes an em dash, quotes curl). Shells need the ASCII.
-OodShell.TypedLine.ASCII = {
-  '\u2018': "'", '\u2019': "'", '\u201a': "'", '\u201b': "'",
-  '\u201c': '"', '\u201d': '"', '\u201e': '"', '\u201f': '"',
-  '\u2013': '-', '\u2014': '--', '\u2026': '...', '\u00a0': ' '
-};
-
-OodShell.TypedLine.prototype.reset = function () {
-  this.units = [];
-  this.caret = 0;
-};
-
-/** The textarea text this line was built from. */
-OodShell.TypedLine.prototype.text = function () {
-  return this.units.map(function (unit) { return unit.char; }).join('');
-};
-
-/** How many characters the shell has for units from (inclusive) to to. */
-OodShell.TypedLine.prototype.width = function (from, to) {
-  let width = 0;
-  for (let i = from; i < to; i++) {
-    width += Array.from(this.units[i].sent).length;
-  }
-  return width;
-};
-
-/** Moves the shell's cursor to before unit target; returns the arrow keys. */
-OodShell.TypedLine.prototype.moveTo = function (target, keys) {
-  let keystrokes = '';
-  if (target > this.caret) {
-    keystrokes = keys.right.repeat(this.width(this.caret, target));
-  } else if (target < this.caret) {
-    keystrokes = keys.left.repeat(this.width(target, this.caret));
-  }
-  this.caret = target;
-  return keystrokes;
-};
-
-/**
- * Updates the line to text, with the caret at UTF-16 offset caret (a
- * textarea's selectionEnd), and returns the keystrokes that do the same to the
- * shell's line: arrows to the end of the part that changed, a backspace for
- * each character of it, the replacement, then arrows to the new caret.
- */
-OodShell.TypedLine.prototype.update = function (text, caret, keys) {
-  const chars = Array.from(text);
-  const target = Array.from(text.slice(0, caret)).length;
-  const units = this.units;
-
-  // The changed part runs from the first difference to the last one. When a
-  // character repeats, which copy changed is ambiguous; it can't have started
-  // after the caret, so look no further than that for the first difference.
-  let start = 0;
-  const limit = Math.min(this.caret, target);
-  while (start < limit && units[start].char === chars[start]) {
-    start++;
-  }
-  let oldEnd = units.length;
-  let newEnd = chars.length;
-  while (oldEnd > start && newEnd > start &&
-         units[oldEnd - 1].char === chars[newEnd - 1]) {
-    oldEnd--;
-    newEnd--;
-  }
-
-  let keystrokes = this.moveTo(oldEnd, keys);
-  keystrokes += keys.backspace.repeat(this.width(start, oldEnd));
-  const inserted = chars.slice(start, newEnd).map(function (char) {
-    return { char: char, sent: OodShell.TypedLine.ASCII[char] || char };
-  });
-  inserted.forEach(function (unit) {
-    keystrokes += unit.sent;
-  });
-
-  this.units = units.slice(0, start).concat(inserted, units.slice(oldEnd));
-  this.caret = start + inserted.length;
-  return keystrokes + this.moveTo(target, keys);
 };
