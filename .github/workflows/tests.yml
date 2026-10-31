@@ -35,7 +35,7 @@ jobs:
     name: Unit tests
 
     steps:
-      - name: Checkout ${{ github.sha }}
+      - name: Checkout ${{ github.sha	}}
         uses: actions/checkout@v6
 
       - name: Setup Ruby ${{ matrix.ruby }}
@@ -98,7 +98,7 @@ jobs:
     runs-on: ubuntu-latest
     name: Kubernetes tests
     steps:
-      - name: Checkout ${{ github.sha }}
+      - name: Checkout ${{ github.sha	}}
         uses: actions/checkout@v6
       - name: Create kind cluster
         uses: helm/kind-action@v1
@@ -112,7 +112,7 @@ jobs:
         id: token
         run: |
            TOKEN=$(kubectl create token ondemand --namespace=ondemand)
-           echo "ondemand=${TOKEN}" >> "$GITHUB_OUTPUT"
+           echo "ondemand=${TOKEN}" >> $GITHUB_OUTPUT
       - name: Setup kubectl
         run: |
           kubectl config set-credentials ondemand --token="${{ steps.token.outputs.ondemand }}"
@@ -135,8 +135,8 @@ jobs:
           - ubuntu-26.04
           - debian-12
           - debian-13
-        # PowerPC still needs emulation; run it nightly or on manual dispatch.
-        arch: ${{ fromJSON((github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '["x86_64","aarch64","ppc64le"]' || '["x86_64","aarch64"]') }}
+        # PowerPC still needs emulation; run it nightly.
+        arch: ${{ fromJSON(github.event_name == 'schedule' && '["x86_64","aarch64","ppc64le"]' || '["x86_64","aarch64"]') }}
         version: ["4.2"]
         exclude:
           # These ARM repos do not yet publish ondemand-nginx or ondemand-passenger.
@@ -166,7 +166,7 @@ jobs:
       HAS_DOCKERHUB_CREDENTIALS: ${{ secrets.ONDEMAND_DOCKERHUB_USER != '' && secrets.ONDEMAND_DOCKERHUB_PASSWORD != '' }}
       OOD_E2E_BROWSER: ${{ matrix.arch == 'aarch64' && 'firefox' || 'chrome' }}
     steps:
-      - name: Checkout ${{ github.sha }}
+      - name: Checkout ${{ github.sha	}}
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
