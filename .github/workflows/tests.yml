@@ -43,7 +43,6 @@ jobs:
         with:
           ruby-version: ${{ matrix.ruby }}
           bundler: 2.5.23
-          rubygems: 'latest'
 
       - name: Cache dependencies
         uses: actions/cache@v5
@@ -58,8 +57,6 @@ jobs:
 
       - name: Setup Bundler
         run: |
-          # try to update gems - this can fail on ruby 3.0
-          gem update --system || true
           bundle config path ~/vendor/bundle
           bundle install --without e2e
           gem install rake
