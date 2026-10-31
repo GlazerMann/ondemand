@@ -49,7 +49,7 @@ class PosixTransfer < Transfer
     elsif copy?
       @steps = files.keys.map do |source|
         path = Pathname.new(source)
-        path.directory? ? Dir["#{source}/**/*"].length : 1
+        path.directory? ? Dir.glob('**/*', File::FNM_DOTMATCH, base: source).length : 1
       end.sum
     elsif remove?
       @steps = names.size
@@ -153,10 +153,7 @@ class PosixTransfer < Transfer
   def cp_single(src, dest)
     dest_parent = dest.parent.to_s
     # TODO: probably need to preserve permissions here.
-    unless File.exist?(dest_parent)
-      FileUtils.mkdir_p(dest_parent)
-      inc_cp_percent
-    end
+    FileUtils.mkdir_p(dest_parent) unless File.exist?(dest_parent)
 
     if src.symlink?
 
