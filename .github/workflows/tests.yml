@@ -135,8 +135,9 @@ jobs:
           - ubuntu-26.04
           - debian-12
           - debian-13
-        # PowerPC still needs emulation; run it nightly.
-        arch: ${{ fromJSON(github.event_name == 'schedule' && '["x86_64","aarch64","ppc64le"]' || '["x86_64","aarch64"]') }}
+        # Run every architecture on PRs, pushes and the nightly schedule.
+        # PowerPC is emulated with QEMU, so it is much slower than the others.
+        arch: ["x86_64", "aarch64", "ppc64le"]
         version: ["4.2"]
         exclude:
           # el10 on aarch64 times out
