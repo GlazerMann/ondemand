@@ -4,7 +4,7 @@ HOSTS:
       - agent
     # Use el9 until this includes el10
     # https://github.com/voxpupuli/beaker-docker/blob/dd4395368a4b14857602128ab7443ee42073a936/lib/beaker/hypervisor/docker.rb#L374
-    platform: el-9-ppc64le
+    platform: el-9-ppc64lesdfasdas
     hypervisor: docker
     image: ppc64le/almalinux:10
     # This runs under QEMU on x86_64 runners. Without an explicit platform,
