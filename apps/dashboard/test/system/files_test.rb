@@ -1324,8 +1324,9 @@ class FilesTest < ApplicationSystemTestCase
         find('tbody a', exact_text: 'allowed').ancestor('tr').click
         click_on('Download')
 
-        sleep 5 # give it enough time to download
-        assert(File.exist?(zip_file), "#{zip_file} was never downloaded!")
+        Selenium::WebDriver::Wait.new(timeout: MAX_WAIT, message: "#{zip_file} was never downloaded!").until do
+          File.exist?(zip_file)
+        end
 
         Dir.mktmpdir do |unzip_tmp_dir|
           `cd #{unzip_tmp_dir}; unzip #{zip_file}`
