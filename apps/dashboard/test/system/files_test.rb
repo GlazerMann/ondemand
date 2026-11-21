@@ -301,18 +301,21 @@ class FilesTest < ApplicationSystemTestCase
 
       find('li.breadcrumb-item', text: File.basename(dir)).click
       find('a.name', text: 'dest').click
+      assert_current_path(files_path("#{dir}/dest"))
 
       assert_selector '#clipboard li', count: 3
 
       find('#clipboard-copy-to-dir').click
 
-      assert_selector('tbody a', exact_text: 'app')
+      # A directory can appear in the listing before all its files are copied.
+      expected_files = ['app/contents.txt', 'foo.txt', 'bar.txt']
+      Selenium::WebDriver::Wait.new(timeout: MAX_WAIT, message: 'Copied files never appeared in dest').until do
+        expected_files.all? { |file| File.file?(File.join(dir, 'dest', file)) }
+      end
+
+      assert_selector('tbody a', exact_text: 'app', wait: MAX_WAIT)
       assert_selector('tbody a', exact_text: 'foo.txt')
       assert_selector('tbody a', exact_text: 'bar.txt')
-
-      assert File.file?(File.join(dir, 'dest', 'app', 'contents.txt'))
-      assert File.file?(File.join(dir, 'dest', 'foo.txt'))
-      assert File.file?(File.join(dir, 'dest', 'bar.txt'))
     end
   end
 
